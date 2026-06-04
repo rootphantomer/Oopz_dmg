@@ -26,11 +26,34 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Build DMG (x64 + arm64)
-        run: npx electron-builder --mac dmg --publish never
+      - name: Build DMG for arm64
+        run: npx electron-builder --mac --arm64 --publish never
 
-      - name: List build artifacts
-        run: ls -lh dist/*.dmg
+      - name: Build DMG for x64
+        run: npx electron-builder --mac --x64 --publish never
+
+      - name: Verify DMG files exist
+        run: |
+          echo "=== dist/ contents ==="
+          ls -lh dist/
+          echo ""
+          DMG_COUNT=$(find dist -maxdepth 1 -name '*.dmg' | wc -l | tr -d ' ')
+          echo "Found ${DMG_COUNT} DMG file(s)"
+          if [ "$DMG_COUNT" -lt 2 ]; then
+            echo "❌ Expected at least 2 DMG files (arm64 + x64), found ${DMG_COUNT}"
+            exit 1
+          fi
+          echo "✅ DMG files ready"
+
+      - name: Collect DMG paths
+        id: artifacts
+        run: |
+          ARM64_DMG=$(find dist -maxdepth 1 -name '*arm64*.dmg' | head -1)
+          X64_DMG=$(find dist -maxdepth 1 -name '*x64*.dmg' | head -1)
+          echo "arm64_dmg=$ARM64_DMG" >> $GITHUB_OUTPUT
+          echo "x64_dmg=$X64_DMG" >> $GITHUB_OUTPUT
+          echo "arm64_name=$(basename $ARM64_DMG)" >> $GITHUB_OUTPUT
+          echo "x64_name=$(basename $X64_DMG)" >> $GITHUB_OUTPUT
 
       - name: Generate release notes
         id: notes
@@ -38,10 +61,8 @@ jobs:
           TAG=${GITHUB_REF#refs/tags/}
           VERSION=${TAG#v}
 
-          # 获取上一个 tag
           PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
 
-          # 生成 changelog
           {
             echo "## Oopz ${TAG}"
             echo ""
@@ -49,8 +70,8 @@ jobs:
             echo ""
             echo "| 文件 | 架构 | 适用机型 |"
             echo "|------|------|----------|"
-            echo "| Oopz-\${VERSION}-arm64.dmg | Apple Silicon (arm64) | M1 / M2 / M3 / M4 系列 Mac |"
-            echo "| Oopz-\${VERSION}-x64.dmg | Intel (x64) | Intel 芯片 Mac |"
+            echo "| \`${{ steps.artifacts.outputs.arm64_name }}\` | Apple Silicon (arm64) | M1 / M2 / M3 / M4 系列 Mac |"
+            echo "| \`${{ steps.artifacts.outputs.x64_name }}\` | Intel (x64) | Intel 芯片 Mac |"
             echo ""
             if [ -n "$PREV_TAG" ]; then
               echo "### 更新日志"
@@ -65,7 +86,6 @@ jobs:
           } > release_notes.md
 
           echo "tag=$TAG" >> $GITHUB_OUTPUT
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -73,6 +93,7 @@ jobs:
           tag_name: ${{ steps.notes.outputs.tag }}
           name: Oopz ${{ steps.notes.outputs.tag }}
           body_path: release_notes.md
+          fail_on_unmatched_files: true
           files: |
-            dist/Oopz-${{ steps.notes.outputs.version }}-arm64.dmg
-            dist/Oopz-${{ steps.notes.outputs.version }}-x64.dmg
+            ${{ steps.artifacts.outputs.arm64_dmg }}
+            ${{ steps.artifacts.outputs.x64_dmg }}
