@@ -14,6 +14,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -24,7 +26,53 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Build & publish (x64 + arm64)
-        run: npx electron-builder --mac dmg --publish always
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build DMG (x64 + arm64)
+        run: npx electron-builder --mac dmg --publish never
+
+      - name: List build artifacts
+        run: ls -lh dist/*.dmg
+
+      - name: Generate release notes
+        id: notes
+        run: |
+          TAG=${GITHUB_REF#refs/tags/}
+          VERSION=${TAG#v}
+
+          # 获取上一个 tag
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+
+          # 生成 changelog
+          {
+            echo "## Oopz ${TAG}"
+            echo ""
+            echo "### 下载"
+            echo ""
+            echo "| 文件 | 架构 | 适用机型 |"
+            echo "|------|------|----------|"
+            echo "| Oopz-\${VERSION}-arm64.dmg | Apple Silicon (arm64) | M1 / M2 / M3 / M4 系列 Mac |"
+            echo "| Oopz-\${VERSION}-x64.dmg | Intel (x64) | Intel 芯片 Mac |"
+            echo ""
+            if [ -n "$PREV_TAG" ]; then
+              echo "### 更新日志"
+              echo ""
+              echo "\`\`\`"
+              git log ${PREV_TAG}..HEAD --pretty=format:"- %s (%h)" --no-merges
+              echo ""
+              echo "\`\`\`"
+            else
+              echo "### 首次发布 🎉"
+            fi
+          } > release_notes.md
+
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.notes.outputs.tag }}
+          name: Oopz ${{ steps.notes.outputs.tag }}
+          body_path: release_notes.md
+          files: |
+            dist/Oopz-${{ steps.notes.outputs.version }}-arm64.dmg
+            dist/Oopz-${{ steps.notes.outputs.version }}-x64.dmg
