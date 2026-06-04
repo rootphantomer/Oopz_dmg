@@ -12,14 +12,13 @@ const APP_ICON_PATH = path.join(__dirname, 'assets', 'icon.png')
 let mainWindow = null
 let tray = null
 
-// ── 媒体权限：自动授权麦克风和摄像头 ────────────────────────────────────
+// ── 媒体权限：自动授权麦克风 ──────────────────────────────────────
 // macOS 首次需要系统级授权，之后会记住选择
 function setupMediaPermissions () {
-  // 在 app ready 之前，通过 session 预授权媒体设备
   const ses = session.fromPartition('persist:oopz')
 
   ses.setPermissionRequestHandler((webContents, permission, callback) => {
-    const allowed = ['media', 'mediaKeySystem', 'audioCapture', 'videoCapture']
+    const allowed = ['media', 'mediaKeySystem', 'audioCapture']
     if (allowed.includes(permission)) {
       callback(true)
     } else {
@@ -27,9 +26,8 @@ function setupMediaPermissions () {
     }
   })
 
-  // 处理权限检查（某些网站会先 check 再 request）
   ses.setPermissionCheckHandler((webContents, permission) => {
-    const allowed = ['media', 'mediaKeySystem', 'audioCapture', 'videoCapture']
+    const allowed = ['media', 'mediaKeySystem', 'audioCapture']
     return allowed.includes(permission)
   })
 }
@@ -37,15 +35,9 @@ function setupMediaPermissions () {
 // macOS：提前请求系统级麦克风权限（首次会弹系统弹窗）
 function requestSystemMediaAccess () {
   if (process.platform === 'darwin') {
-    // 请求麦克风权限
     const micStatus = systemPreferences.getMediaAccessStatus('microphone')
     if (micStatus === 'not-determined') {
       systemPreferences.askForMediaAccess('microphone')
-    }
-    // 请求摄像头权限
-    const camStatus = systemPreferences.getMediaAccessStatus('camera')
-    if (camStatus === 'not-determined') {
-      systemPreferences.askForMediaAccess('camera')
     }
   }
 }
@@ -181,7 +173,7 @@ app.whenReady().then(() => {
   // 设置媒体权限自动授权（必须在窗口创建前）
   setupMediaPermissions()
 
-  // macOS：首次启动时请求系统级麦克风/摄像头权限
+  // macOS：首次启动时请求系统级麦克风权限
   requestSystemMediaAccess()
 
   createWindow()
