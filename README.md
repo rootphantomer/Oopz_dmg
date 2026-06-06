@@ -22,7 +22,7 @@
 ## 开发
 
 ```bash
-# 安装依赖
+# 安装依赖（首次）
 npm install
 
 # 开发运行
@@ -37,8 +37,9 @@ npm start
 ## 打包
 
 ```bash
-npm run build      # 生成 DMG 安装包（x64 + arm64）
-npm run build:dir  # 仅生成 .app（不打 DMG，速度快）
+npm run build      # 生成 .app（默认，速度快）
+npm run build:dmg  # 生成 DMG 安装包（x64 + arm64）
+npm run build:dir  # 仅生成 .app 目录（不打包，最快）
 ```
 
 输出在 `dist/` 目录。
@@ -101,6 +102,6 @@ iconutil -c icns assets/icon.iconset -o assets/icon.icns
 
 ## 技术栈
 
-- [Electron](https://www.electronjs.org/) 31
-- [electron-builder](https://www.electronjs.org/builder) 24
+- [Electron](https://www.electronjs.org/) 39
+- [electron-builder](https://www.electronjs.org/builder) 26
 - 目标平台：macOS（x64 + arm64）
