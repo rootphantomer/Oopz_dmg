@@ -32,35 +32,42 @@ jobs:
       - name: Build DMG for x64
         run: npx electron-builder --mac --x64 --publish never
 
-      - name: Verify DMG files exist
-        run: |
-          echo "=== dist/ contents ==="
-          ls -lh dist/
-          echo ""
-          DMG_COUNT=$(find dist -maxdepth 1 -name '*.dmg' | wc -l | tr -d ' ')
-          echo "Found ${DMG_COUNT} DMG file(s)"
-          if [ "$DMG_COUNT" -lt 2 ]; then
-            echo "❌ Expected at least 2 DMG files (arm64 + x64), found ${DMG_COUNT}"
-            exit 1
-          fi
-          echo "✅ DMG files ready"
-
-      - name: Collect DMG paths
+      - name: Verify and collect DMG files
         id: artifacts
         run: |
-          ARM64_DMG=$(find dist -maxdepth 1 -name '*arm64*.dmg' | head -1)
-          X64_DMG=$(find dist -maxdepth 1 -name '*x64*.dmg' | head -1)
+          echo "=== dist/ contents ==="
+          ls -lh dist/*.dmg 2>/dev/null || true
+          echo ""
+
+          # arm64 DMG：文件名含 arm64
+          ARM64_DMG=$(find dist -maxdepth 1 -name '*.dmg' | grep -i arm64 | head -1)
+
+          # x64 DMG：electron-builder 对 x64 不加架构后缀，排除 arm64 文件即可
+          X64_DMG=$(find dist -maxdepth 1 -name '*.dmg' | grep -v arm64 | grep -v blockmap | head -1)
+
+          echo "arm64 DMG: $ARM64_DMG"
+          echo "x64  DMG : $X64_DMG"
+
+          # 验证两个文件都存在
+          if [ -z "$ARM64_DMG" ] || [ ! -f "$ARM64_DMG" ]; then
+            echo "❌ arm64 DMG not found"
+            exit 1
+          fi
+          if [ -z "$X64_DMG" ] || [ ! -f "$X64_DMG" ]; then
+            echo "❌ x64 DMG not found"
+            exit 1
+          fi
+
+          echo "✅ Both DMG files ready"
           echo "arm64_dmg=$ARM64_DMG" >> $GITHUB_OUTPUT
-          echo "x64_dmg=$X64_DMG" >> $GITHUB_OUTPUT
+          echo "x64_dmg=$X64_DMG"     >> $GITHUB_OUTPUT
           echo "arm64_name=$(basename $ARM64_DMG)" >> $GITHUB_OUTPUT
-          echo "x64_name=$(basename $X64_DMG)" >> $GITHUB_OUTPUT
+          echo "x64_name=$(basename $X64_DMG)"     >> $GITHUB_OUTPUT
 
       - name: Generate release notes
         id: notes
         run: |
           TAG=${GITHUB_REF#refs/tags/}
-          VERSION=${TAG#v}
-
           PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
 
           {
