@@ -39,16 +39,12 @@ jobs:
           ls -lh dist/*.dmg 2>/dev/null || true
           echo ""
 
-          # arm64 DMG：文件名含 arm64
           ARM64_DMG=$(find dist -maxdepth 1 -name '*.dmg' | grep -i arm64 | head -1)
-
-          # x64 DMG：electron-builder 对 x64 不加架构后缀，排除 arm64 文件即可
           X64_DMG=$(find dist -maxdepth 1 -name '*.dmg' | grep -v arm64 | grep -v blockmap | head -1)
 
           echo "arm64 DMG: $ARM64_DMG"
           echo "x64  DMG : $X64_DMG"
 
-          # 验证两个文件都存在
           if [ -z "$ARM64_DMG" ] || [ ! -f "$ARM64_DMG" ]; then
             echo "❌ arm64 DMG not found"
             exit 1
@@ -90,6 +86,14 @@ jobs:
             else
               echo "### 首次发布 🎉"
             fi
+            echo ""
+            echo "### 安装说明"
+            echo ""
+            echo "由于本应用未签名，macOS 可能会提示「无法验证开发者」。"
+            echo ""
+            echo "**解决方法（二选一）：**"
+            echo "1. 右键点击 Oopz.app → 选择「打开」→ 在弹窗中再次点击「打开」"
+            echo "2. 系统设置 → 隐私与安全性 → 找到「已阻止使用 Oopz…」→ 点击「仍要打开」"
           } > release_notes.md
 
           echo "tag=$TAG" >> $GITHUB_OUTPUT
