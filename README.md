@@ -4,10 +4,12 @@
 
 ## 功能
 
-- 🎙️ **语音通话**：自动授权麦克风权限，开箱即用
-- 📡 **断网提示**：网络断开时显示离线页面，恢复后自动重连
+- 🎙️ **语音通话**：自动授权麦克风权限，网页按需申请，不提前打扰
+- 🔄 **自动更新**：启动后静默检查更新，后台下载完成后推送通知一键升级
+- 📡 **断网提示**：网络断开时显示离线页面，记住当前页面位置，恢复后回到原处
+- 📁 **文件下载**：下载文件时弹出保存对话框，不静默丢失
 - 📌 **系统托盘**：关闭窗口后最小化到菜单栏，后台运行
-- 🪟 **窗口状态记忆**：重启后自动恢复上次窗口位置和大小
+- 🪟 **窗口状态记忆**：窗口位置和大小实时保存（防抖），崩溃后也能恢复
 - 🔢 **Dock 未读徽标**：标题含未读数时，Dock 图标显示红色角标
 - ⏱️ **加载超时保护**：8 秒未加载完成强制显示窗口，避免无限白屏
 - 🔒 **持久登录**：Cookie/Session 持久化，重启不丢失登录态
@@ -43,11 +45,6 @@ npm install
 npm start
 ```
 
-> 如果 Electron 下载慢，创建 `.npmrc` 文件：
-> ```
-> electron_mirror=https://npmmirror.com/mirrors/electron/
-> ```
-
 ## 打包
 
 ```bash
@@ -68,15 +65,17 @@ git push origin v1.0.0
 ```
 
 CI 会自动：
-1. 构建 arm64 + x64 双架构 DMG
-2. 创建 GitHub Release
-3. 上传 DMG 安装包并生成更新日志
+1. 构建 arm64 + x64 双架构 DMG（单次构建，不分步运行）
+2. 上传 DMG 安装包及自动更新元数据（`latest-mac.yml` + 增量包）
+3. 创建 GitHub Release 并生成更新日志
+
+发布后，存量用户启动 App 后会静默检测到新版本并自动下载。
 
 ## 项目结构
 
 ```
 oopz/
-├── main.js              # Electron 主进程（窗口、托盘、权限、离线页、Dock 徽标）
+├── main.js              # Electron 主进程（窗口、托盘、权限、自动更新、离线页、文件下载、Dock 徽标）
 ├── preload.js           # 预加载脚本（安全隔离）
 ├── package.json         # 项目配置 & electron-builder 配置
 ├── .github/
@@ -120,4 +119,5 @@ iconutil -c icns assets/icon.iconset -o assets/icon.icns
 
 - [Electron](https://www.electronjs.org/) 39
 - [electron-builder](https://www.electronjs.org/builder) 26
+- [electron-updater](https://github.com/electron-userland/electron-builder/tree/master/packages/electron-updater) 6
 - 目标平台：macOS（x64 + arm64）

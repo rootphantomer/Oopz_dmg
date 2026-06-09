@@ -1,7 +1,7 @@
 {
   "name": "oopz",
   "productName": "Oopz",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Oopz desktop app powered by Electron",
   "main": "main.js",
     "scripts": {
@@ -16,7 +16,8 @@
   "license": "MIT",
   "devDependencies": {
     "electron": "^39.8.5",
-    "electron-builder": "^26.8.1"
+    "electron-builder": "^26.8.1",
+    "electron-updater": "^6.8.9"
   },
   "build": {
     "appId": "cn.oopz.app",

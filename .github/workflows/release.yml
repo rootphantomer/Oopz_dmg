@@ -24,13 +24,12 @@ jobs:
           cache: npm
 
       - name: Install dependencies
-        run: npm ci
+        run: npm install
+        env:
+          NPM_CONFIG_REGISTRY: https://registry.npmjs.org
 
-      - name: Build DMG for arm64
-        run: npx electron-builder --mac --arm64 --publish never
-
-      - name: Build DMG for x64
-        run: npx electron-builder --mac --x64 --publish never
+      - name: Build DMG (dual arch)
+        run: npx electron-builder --mac --publish never
 
       - name: Verify and collect DMG files
         id: artifacts
@@ -106,5 +105,8 @@ jobs:
           body_path: release_notes.md
           fail_on_unmatched_files: true
           files: |
+            dist/latest-mac.yml
+            ${{ steps.artifacts.outputs.arm64_dmg }}.blockmap
+            ${{ steps.artifacts.outputs.x64_dmg }}.blockmap
             ${{ steps.artifacts.outputs.arm64_dmg }}
             ${{ steps.artifacts.outputs.x64_dmg }}

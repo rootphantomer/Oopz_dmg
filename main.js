@@ -1,6 +1,7 @@
 'use strict'
 
-const { app, BrowserWindow, Tray, Menu, nativeImage, shell, session, systemPreferences } = require('electron')
+const { app, BrowserWindow, Tray, Menu, nativeImage, shell, session, Notification } = require('electron')
+const { autoUpdater } = require("electron-updater")
 const path = require('path')
 const fs = require('fs')
 
@@ -37,8 +38,9 @@ function saveWindowState () {
 }
 
 // ── 离线提示页（内联 HTML，无需额外文件）────────────────────────────
-function showOfflinePage () {
+function showOfflinePage (failedUrl) {
   if (!mainWindow) return
+  const retryUrl = failedUrl || APP_URL
   const html = `
     <!DOCTYPE html>
     <html lang="zh-CN">
@@ -85,11 +87,11 @@ function showOfflinePage () {
       <script>
         function retry() {
           document.getElementById('status').textContent = '正在连接...';
-          window.location.href = '${APP_URL}';
+          window.location.href = '${retryUrl}';
         }
         window.addEventListener('online', () => {
           document.getElementById('status').textContent = '网络已恢复，正在重新加载...';
-          setTimeout(() => { window.location.href = '${APP_URL}'; }, 800);
+          setTimeout(() => { window.location.href = '${retryUrl}'; }, 800);
         });
       </script>
     </body>
@@ -117,15 +119,6 @@ function setupMediaPermissions () {
   })
 }
 
-// macOS：提前请求系统级麦克风权限（首次会弹系统弹窗）
-function requestSystemMediaAccess () {
-  if (process.platform === 'darwin') {
-    const micStatus = systemPreferences.getMediaAccessStatus('microphone')
-    if (micStatus === 'not-determined') {
-      systemPreferences.askForMediaAccess('microphone')
-    }
-  }
-}
 
 // ── 解析 title 中的未读数，设置 Dock 徽标 ─────────────────────────
 function updateDockBadge (title) {
@@ -198,6 +191,17 @@ function createWindow () {
     }
   })
 
+  // 窗口大小/位置变化时实时保存（防抖）
+  let saveDebounce = null
+  mainWindow.on('resize', () => {
+    clearTimeout(saveDebounce)
+    saveDebounce = setTimeout(saveWindowState, 500)
+  })
+  mainWindow.on('move', () => {
+    clearTimeout(saveDebounce)
+    saveDebounce = setTimeout(saveWindowState, 500)
+  })
+
   // 页面标题变化 → 更新 Dock 徽标（未读消息数）
   mainWindow.webContents.on('page-title-updated', (event, title) => {
     updateDockBadge(title)
@@ -206,7 +210,7 @@ function createWindow () {
   // 加载失败（断网等）→ 显示离线提示页
   mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL) => {
     if (event.sender === mainWindow.webContents) {
-      showOfflinePage()
+      showOfflinePage(validatedURL)
     }
   })
 
@@ -268,6 +272,57 @@ function createTray () {
   })
 }
 
+// ── 自动更新 ──────────────────────────────────────────────────────────
+function setupAutoUpdater () {
+  if (process.env.NODE_ENV === 'development') return
+
+  autoUpdater.autoDownload = true
+  autoUpdater.autoInstallOnAppQuit = true
+
+  autoUpdater.on('update-downloaded', (info) => {
+    const notif = new Notification({
+      title: 'Oopz 更新已就绪',
+      body: `版本 ${info.version} 已下载完成，点击重启以更新`,
+      silent: true
+    })
+    notif.on('click', () => { autoUpdater.quitAndInstall() })
+    notif.show()
+  })
+
+  autoUpdater.on('error', (err) => {
+    console.error('[auto-updater]', err.message)
+  })
+
+  // 启动后延迟检查，避免影响首次加载
+  setTimeout(() => {
+    autoUpdater.checkForUpdates().catch(() => {})
+  }, 10000)
+}
+// ── 文件下载处理 ──────────────────────────────────────────────────────
+function setupDownloadHandler () {
+  const ses = session.fromPartition('persist:oopz')
+  ses.on('will-download', (event, item) => {
+    const { dialog } = require('electron')
+    const defaultPath = item.getFilename()
+    dialog.showSaveDialog(mainWindow, {
+      defaultPath,
+      buttonLabel: '保存'
+    }).then(({ filePath }) => {
+      if (!filePath) {
+        item.cancel()
+        return
+      }
+      item.setSavePath(filePath)
+      item.on('done', (_event, state) => {
+        if (state === 'completed') {
+          console.log('[download] 完成:', filePath)
+        } else {
+          console.error('[download] 失败:', state)
+        }
+      })
+    })
+  })
+}
 // ── 工具函数 ────────────────────────────────────────────────────────────
 function showWindow () {
   if (!mainWindow) return
@@ -279,7 +334,8 @@ function showWindow () {
 // ── 应用事件 ────────────────────────────────────────────────────────────
 app.whenReady().then(() => {
   setupMediaPermissions()
-  requestSystemMediaAccess()
+  setupAutoUpdater()
+  setupDownloadHandler()
   createWindow()
   createTray()
   app.on('activate', () => { showWindow() })
