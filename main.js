@@ -1,6 +1,6 @@
 'use strict'
 
-const { app, BrowserWindow, Tray, Menu, nativeImage, shell, session, Notification } = require('electron')
+const { app, BrowserWindow, Tray, Menu, nativeImage, shell, session, Notification, screen } = require('electron')
 const { autoUpdater } = require("electron-updater")
 const path = require('path')
 const fs = require('fs')
@@ -22,6 +22,19 @@ function loadWindowState () {
     if (fs.existsSync(WINDOW_STATE_PATH)) {
       const data = JSON.parse(fs.readFileSync(WINDOW_STATE_PATH, 'utf8'))
       if (data.width >= 400 && data.height >= 300) {
+        // 校验坐标是否仍在当前显示器范围内：多屏断开后旧坐标会指向屏幕外
+        if (Number.isFinite(data.x) && Number.isFinite(data.y)) {
+          const onScreen = screen.getAllDisplays().some(d => {
+            const b = d.bounds
+            return data.x >= b.x && data.y >= b.y &&
+                   data.x + data.width <= b.x + b.width &&
+                   data.y + data.height <= b.y + b.height
+          })
+          if (!onScreen) {
+            data.x = undefined
+            data.y = undefined
+          }
+        }
         return data
       }
     }
@@ -105,18 +118,14 @@ function setupMediaPermissions () {
   const ses = session.fromPartition('persist:oopz')
 
   ses.setPermissionRequestHandler((webContents, permission, callback) => {
-    const allowed = ['media', 'mediaKeySystem', 'audioCapture']
-    if (allowed.includes(permission)) {
+    if (permission === 'media') {
       callback(true)
     } else {
       callback(false)
     }
   })
 
-  ses.setPermissionCheckHandler((webContents, permission) => {
-    const allowed = ['media', 'mediaKeySystem', 'audioCapture']
-    return allowed.includes(permission)
-  })
+  ses.setPermissionCheckHandler((webContents, permission) => permission === 'media')
 }
 
 
@@ -181,6 +190,9 @@ function createWindow () {
   mainWindow.webContents.once('did-finish-load', () => {
     clearTimeout(loadTimeout)
   })
+  mainWindow.webContents.once('did-fail-load', () => {
+    clearTimeout(loadTimeout)
+  })
 
   // 点击关闭按钮 → 最小化到托盘，Dock 图标保留
   mainWindow.on('close', (event) => {
@@ -211,6 +223,14 @@ function createWindow () {
   mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL) => {
     if (event.sender === mainWindow.webContents) {
       showOfflinePage(validatedURL)
+    }
+  })
+
+  // 渲染进程崩溃 → 自动恢复（避免白屏卡死）
+  mainWindow.webContents.on('render-process-gone', (_event, details) => {
+    console.error('[renderer-gone]', details.reason)
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.reload()
     }
   })
 
@@ -347,5 +367,4 @@ app.on('window-all-closed', (event) => {
 
 app.on('before-quit', () => {
   app.isQuitting = true
-  saveWindowState()
 })
