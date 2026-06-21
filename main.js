@@ -1,6 +1,6 @@
 'use strict'
 
-const { app, BrowserWindow, Tray, Menu, nativeImage, shell, session, Notification, screen } = require('electron')
+const { app, BrowserWindow, Tray, Menu, nativeImage, shell, session, Notification, screen, dialog } = require('electron')
 const { autoUpdater } = require("electron-updater")
 const path = require('path')
 const fs = require('fs')
@@ -15,6 +15,8 @@ const WINDOW_STATE_PATH = path.join(app.getPath('userData'), 'window-state.json'
 let mainWindow = null
 let tray = null
 let loadTimeout = null
+let rendererCrashCount = 0
+const MAX_RENDERER_RETRIES = 3
 
 // ── 窗口状态持久化 ──────────────────────────────────────────────────────
 function loadWindowState () {
@@ -50,66 +52,68 @@ function saveWindowState () {
   } catch { /* ignore */ }
 }
 
-// ── 离线提示页（内联 HTML，无需额外文件）────────────────────────────
+// ── 离线提示页（模块级常量，避免每次重建 HTML）──────────────────────
+const OFFLINE_PAGE_HTML = `
+  <!DOCTYPE html>
+  <html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Oopz - 离线</title>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      body {
+        height: 100vh;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        background: #0f0f0f;
+        color: #e0e0e0;
+        font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif;
+        user-select: none;
+      }
+      .icon { font-size: 48px; margin-bottom: 16px; opacity: 0.6; }
+      h2 { font-size: 18px; font-weight: 600; margin-bottom: 8px; color: #ffffff; }
+      p { font-size: 13px; color: #8e8e93; margin-bottom: 24px; }
+      button {
+        padding: 8px 24px;
+        background: #007aff;
+        color: #fff;
+        border: none;
+        border-radius: 8px;
+        font-size: 13px;
+        cursor: pointer;
+        transition: background 0.2s;
+      }
+      button:hover { background: #0056cc; }
+      .status { font-size: 12px; color: #ff3b30; margin-top: 16px; }
+    </style>
+  </head>
+  <body>
+    <div class="icon">📡</div>
+    <h2>网络已断开</h2>
+    <p>请检查网络连接后重试</p>
+    <button onclick="retry()">重新连接</button>
+    <div class="status" id="status"></div>
+    <script>
+      function retry() {
+        document.getElementById('status').textContent = '正在连接...';
+        window.location.href = '__RETRY_URL__';
+      }
+      window.addEventListener('online', () => {
+        document.getElementById('status').textContent = '网络已恢复，正在重新加载...';
+        setTimeout(() => { window.location.href = '__RETRY_URL__'; }, 800);
+      });
+    </script>
+  </body>
+  </html>
+`
+
 function showOfflinePage (failedUrl) {
   if (!mainWindow) return
   const retryUrl = failedUrl || APP_URL
-  const html = `
-    <!DOCTYPE html>
-    <html lang="zh-CN">
-    <head>
-      <meta charset="UTF-8">
-      <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>Oopz - 离线</title>
-      <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body {
-          height: 100vh;
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          justify-content: center;
-          background: #0f0f0f;
-          color: #e0e0e0;
-          font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif;
-          user-select: none;
-        }
-        .icon { font-size: 48px; margin-bottom: 16px; opacity: 0.6; }
-        h2 { font-size: 18px; font-weight: 600; margin-bottom: 8px; color: #ffffff; }
-        p { font-size: 13px; color: #8e8e93; margin-bottom: 24px; }
-        button {
-          padding: 8px 24px;
-          background: #007aff;
-          color: #fff;
-          border: none;
-          border-radius: 8px;
-          font-size: 13px;
-          cursor: pointer;
-          transition: background 0.2s;
-        }
-        button:hover { background: #0056cc; }
-        .status { font-size: 12px; color: #ff3b30; margin-top: 16px; }
-      </style>
-    </head>
-    <body>
-      <div class="icon">📡</div>
-      <h2>网络已断开</h2>
-      <p>请检查网络连接后重试</p>
-      <button onclick="retry()">重新连接</button>
-      <div class="status" id="status"></div>
-      <script>
-        function retry() {
-          document.getElementById('status').textContent = '正在连接...';
-          window.location.href = '${retryUrl}';
-        }
-        window.addEventListener('online', () => {
-          document.getElementById('status').textContent = '网络已恢复，正在重新加载...';
-          setTimeout(() => { window.location.href = '${retryUrl}'; }, 800);
-        });
-      </script>
-    </body>
-    </html>
-  `
+  const html = OFFLINE_PAGE_HTML.replaceAll('__RETRY_URL__', retryUrl)
   mainWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`)
 }
 
@@ -226,21 +230,29 @@ function createWindow () {
     }
   })
 
-  // 渲染进程崩溃 → 自动恢复（避免白屏卡死）
+  // 渲染进程崩溃 → 自动恢复（避免白屏卡死，限制重试次数防止无限循环）
   mainWindow.webContents.on('render-process-gone', (_event, details) => {
     console.error('[renderer-gone]', details.reason)
+    rendererCrashCount++
+    if (rendererCrashCount > MAX_RENDERER_RETRIES) {
+      console.error('[renderer-gone] 达到最大重试次数，停止恢复')
+      showOfflinePage(APP_URL)
+      return
+    }
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.reload()
     }
   })
 
-  // 外部链接在系统浏览器中打开
+  // 页面加载成功后重置崩溃计数
+  mainWindow.webContents.once('did-finish-load', () => {
+    rendererCrashCount = 0
+  })
+
+  // 外部链接在系统浏览器中打开，所有 window.open() 统一拒绝（保持单窗口）
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    if (!url.startsWith('https://web.oopz.cn') && !url.startsWith('https://oopz.cn')) {
-      shell.openExternal(url)
-      return { action: 'deny' }
-    }
-    return { action: 'allow' }
+    shell.openExternal(url)
+    return { action: 'deny' }
   })
 
   // 页面内导航也限制在 oopz.cn 域名
@@ -322,7 +334,6 @@ function setupAutoUpdater () {
 function setupDownloadHandler () {
   const ses = session.fromPartition('persist:oopz')
   ses.on('will-download', (event, item) => {
-    const { dialog } = require('electron')
     const defaultPath = item.getFilename()
     dialog.showSaveDialog(mainWindow, {
       defaultPath,
