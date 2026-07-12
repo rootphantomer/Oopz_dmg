@@ -1,7 +1,7 @@
 'use strict'
 
 const { app, BrowserWindow, Tray, Menu, nativeImage, shell, session, Notification, screen, dialog } = require('electron')
-const { autoUpdater } = require("electron-updater")
+const { autoUpdater } = require('electron-updater')
 const path = require('path')
 const fs = require('fs')
 
@@ -10,6 +10,8 @@ const APP_URL = 'https://web.oopz.cn'
 const TRAY_ICON_PATH = path.join(__dirname, 'assets', 'trayTemplate.png')
 const APP_ICON_PATH = path.join(__dirname, 'assets', 'icon.png')
 const WINDOW_STATE_PATH = path.join(app.getPath('userData'), 'window-state.json')
+const ALLOWED_APP_HOSTS = new Set(['web.oopz.cn', 'oopz.cn'])
+const ALLOWED_EXTERNAL_PROTOCOLS = new Set(['http:', 'https:'])
 
 // ── 全局变量 ────────────────────────────────────────────────────────────
 let mainWindow = null
@@ -50,6 +52,59 @@ function saveWindowState () {
     const bounds = mainWindow.getBounds()
     fs.writeFileSync(WINDOW_STATE_PATH, JSON.stringify(bounds), 'utf8')
   } catch { /* ignore */ }
+}
+
+
+// ── URL / Origin 安全校验 ──────────────────────────────────────────────
+function parseUrl (url) {
+  try {
+    return new URL(url)
+  } catch {
+    return null
+  }
+}
+
+function isAllowedAppHost (hostname) {
+  return ALLOWED_APP_HOSTS.has(hostname)
+}
+
+function isAllowedAppUrl (url) {
+  const parsed = parseUrl(url)
+  return Boolean(parsed && parsed.protocol === 'https:' && isAllowedAppHost(parsed.hostname))
+}
+
+function isHttpUrl (url) {
+  const parsed = parseUrl(url)
+  return Boolean(parsed && ALLOWED_EXTERNAL_PROTOCOLS.has(parsed.protocol))
+}
+
+function safeOpenExternal (url) {
+  if (!isHttpUrl(url)) {
+    console.warn('[navigation] blocked external URL:', url)
+    return
+  }
+  shell.openExternal(url).catch(err => {
+    console.error('[navigation] failed to open external URL:', err.message)
+  })
+}
+
+function normalizeRetryUrl (url) {
+  return isAllowedAppUrl(url) ? url : APP_URL
+}
+
+function isAllowedMediaRequest (webContents, details = {}) {
+  const origin = details.securityOrigin || details.requestingUrl || (webContents && webContents.getURL())
+  const parsed = parseUrl(origin)
+  if (!parsed || !isAllowedAppHost(parsed.hostname)) return false
+
+  // 只自动授权麦克风。若请求包含视频，交给默认拒绝，避免误开摄像头。
+  if (Array.isArray(details.mediaTypes)) {
+    return details.mediaTypes.includes('audio') && !details.mediaTypes.includes('video')
+  }
+  if (details.mediaType) {
+    return details.mediaType === 'audio'
+  }
+  return false
 }
 
 // ── 离线提示页（模块级常量，避免每次重建 HTML）──────────────────────
@@ -97,13 +152,14 @@ const OFFLINE_PAGE_HTML = `
     <button onclick="retry()">重新连接</button>
     <div class="status" id="status"></div>
     <script>
+      const retryUrl = __RETRY_URL_JSON__;
       function retry() {
         document.getElementById('status').textContent = '正在连接...';
-        window.location.href = '__RETRY_URL__';
+        window.location.href = retryUrl;
       }
       window.addEventListener('online', () => {
         document.getElementById('status').textContent = '网络已恢复，正在重新加载...';
-        setTimeout(() => { window.location.href = '__RETRY_URL__'; }, 800);
+        setTimeout(() => { window.location.href = retryUrl; }, 800);
       });
     </script>
   </body>
@@ -112,24 +168,22 @@ const OFFLINE_PAGE_HTML = `
 
 function showOfflinePage (failedUrl) {
   if (!mainWindow) return
-  const retryUrl = failedUrl || APP_URL
-  const html = OFFLINE_PAGE_HTML.replaceAll('__RETRY_URL__', retryUrl)
+  const retryUrl = normalizeRetryUrl(failedUrl || APP_URL)
+  const html = OFFLINE_PAGE_HTML.replace('__RETRY_URL_JSON__', JSON.stringify(retryUrl))
   mainWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`)
 }
 
-// ── 媒体权限：自动授权麦克风 ──────────────────────────────────────
+// ── 媒体权限：仅对可信来源自动授权麦克风 ─────────────────────────────
 function setupMediaPermissions () {
   const ses = session.fromPartition('persist:oopz')
 
-  ses.setPermissionRequestHandler((webContents, permission, callback) => {
-    if (permission === 'media') {
-      callback(true)
-    } else {
-      callback(false)
-    }
+  ses.setPermissionRequestHandler((webContents, permission, callback, details) => {
+    callback(permission === 'media' && isAllowedMediaRequest(webContents, details))
   })
 
-  ses.setPermissionCheckHandler((webContents, permission) => permission === 'media')
+  ses.setPermissionCheckHandler((webContents, permission, _requestingOrigin, details) => {
+    return permission === 'media' && isAllowedMediaRequest(webContents, details)
+  })
 }
 
 
@@ -175,6 +229,7 @@ function createWindow () {
       nodeIntegration: false,
       contextIsolation: true,
       nativeWindowOpen: true,
+      sandbox: true,
     },
     show: false,
   })
@@ -224,8 +279,9 @@ function createWindow () {
   })
 
   // 加载失败（断网等）→ 显示离线提示页
-  mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL) => {
-    if (event.sender === mainWindow.webContents) {
+  mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+    if (event.sender === mainWindow.webContents && isMainFrame && errorCode !== -3) {
+      console.error('[load] failed:', errorCode, errorDescription, validatedURL)
       showOfflinePage(validatedURL)
     }
   })
@@ -245,23 +301,25 @@ function createWindow () {
   })
 
   // 页面加载成功后重置崩溃计数
-  mainWindow.webContents.once('did-finish-load', () => {
+  mainWindow.webContents.on('did-finish-load', () => {
     rendererCrashCount = 0
   })
 
   // 外部链接在系统浏览器中打开，所有 window.open() 统一拒绝（保持单窗口）
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url)
+    if (isAllowedAppUrl(url)) {
+      mainWindow.loadURL(url)
+    } else {
+      safeOpenExternal(url)
+    }
     return { action: 'deny' }
   })
 
-  // 页面内导航也限制在 oopz.cn 域名
+  // 页面内导航限制在 Oopz 可信域名；外部 http(s) 链接交给系统浏览器
   mainWindow.webContents.on('will-navigate', (event, url) => {
-    const allowed = url.startsWith('https://web.oopz.cn') || url.startsWith('https://oopz.cn')
-    if (!allowed) {
-      event.preventDefault()
-      shell.openExternal(url)
-    }
+    if (isAllowedAppUrl(url)) return
+    event.preventDefault()
+    safeOpenExternal(url)
   })
 }
 
@@ -296,6 +354,7 @@ function createTray () {
   tray.setContextMenu(contextMenu)
 
   tray.on('click', () => {
+    if (!mainWindow) return
     if (mainWindow.isVisible()) {
       mainWindow.hide()
     } else {
@@ -333,24 +392,33 @@ function setupAutoUpdater () {
 // ── 文件下载处理 ──────────────────────────────────────────────────────
 function setupDownloadHandler () {
   const ses = session.fromPartition('persist:oopz')
-  ses.on('will-download', (event, item) => {
+  ses.on('will-download', (_event, item) => {
     const defaultPath = item.getFilename()
+    let savePath = defaultPath
+
+    item.pause()
+    item.on('done', (_event, state) => {
+      if (state === 'completed') {
+        console.log('[download] 完成:', savePath)
+      } else if (state !== 'cancelled') {
+        console.error('[download] 失败:', state)
+      }
+    })
+
     dialog.showSaveDialog(mainWindow, {
       defaultPath,
       buttonLabel: '保存'
-    }).then(({ filePath }) => {
-      if (!filePath) {
+    }).then(({ canceled, filePath }) => {
+      if (canceled || !filePath) {
         item.cancel()
         return
       }
+      savePath = filePath
       item.setSavePath(filePath)
-      item.on('done', (_event, state) => {
-        if (state === 'completed') {
-          console.log('[download] 完成:', filePath)
-        } else {
-          console.error('[download] 失败:', state)
-        }
-      })
+      item.resume()
+    }).catch((err) => {
+      console.error('[download] 保存对话框失败:', err.message)
+      item.cancel()
     })
   })
 }

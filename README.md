@@ -49,8 +49,8 @@ npm start
 ## 打包
 
 ```bash
-npm run build      # 生成 .app（默认，速度快）
-npm run build:dmg  # 生成 DMG 安装包（x64 + arm64）
+npm run build      # 生成 DMG 安装包（x64 + arm64）
+npm run build:dmg  # 同上，显式生成 DMG
 npm run build:dir  # 仅生成 .app 目录（不打包，最快）
 ```
 

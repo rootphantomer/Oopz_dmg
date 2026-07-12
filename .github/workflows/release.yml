@@ -23,12 +23,20 @@ jobs:
           node-version: 22
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
         env:
-          NPM_CONFIG_REGISTRY: https://registry.npmjs.org
+          NPM_CONFIG_REGISTRY: https://registry.npmmirror.com
+          ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
+          ELECTRON_BUILDER_BINARIES_MIRROR: https://npmmirror.com/mirrors/electron-builder-binaries/
+
+      - name: Check syntax
+        run: npm run check
 
       - name: Build DMG (dual arch)
-        run: npx electron-builder --mac --publish never
+        run: npx electron-builder --mac dmg --x64 --arm64 --publish never
+        env:
+          ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
+          ELECTRON_BUILDER_BINARIES_MIRROR: https://npmmirror.com/mirrors/electron-builder-binaries/
 
       - name: Verify and collect DMG files
         id: artifacts

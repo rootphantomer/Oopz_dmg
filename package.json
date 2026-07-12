@@ -1,23 +1,26 @@
 {
   "name": "oopz",
   "productName": "Oopz",
-  "version": "1.2.0",
+  "version": "1.2.2",
   "description": "Oopz desktop app powered by Electron",
   "main": "main.js",
-    "scripts": {
+  "scripts": {
     "start": "electron .",
-    "build": "electron-builder --mac",
-    "build:dmg": "electron-builder --mac dmg",
+    "check": "node --check main.js && node --check preload.js",
+    "build": "electron-builder --mac dmg --x64 --arm64",
+    "build:dmg": "electron-builder --mac dmg --x64 --arm64",
     "build:dir": "electron-builder --mac dir",
-    "clean": "rm -rf node_modules package-lock.json dist"
+    "clean": "rm -rf node_modules dist"
   },
   "keywords": [],
   "author": "oopz",
   "license": "MIT",
+  "dependencies": {
+    "electron-updater": "^6.8.9"
+  },
   "devDependencies": {
     "electron": "^39.8.5",
-    "electron-builder": "^26.8.1",
-    "electron-updater": "^6.8.9"
+    "electron-builder": "^26.8.1"
   },
   "build": {
     "appId": "cn.oopz.app",
