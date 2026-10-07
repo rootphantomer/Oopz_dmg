@@ -4,7 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 项目性质
 
-这是一个 Electron 桌面端应用（仅 macOS，arm64 + x64），将 `https://web.oopz.cn` 封装为原生窗口。代码体量很小——主进程逻辑全部在 `main.js`（~350 行），渲染进程不写业务代码，全部交给 `web.oopz.cn` 处理。
+这是一个 Electron 桌面端应用（仅 macOS，arm64 + x64），将 `https://web.oopz.cn` 封装为原生窗口。代码体量很小——主进程逻辑全部在 `main.js`（~485 行），渲染进程不写业务代码，全部交给 `web.oopz.cn` 处理。
+
+**技术栈**：Electron 44 + electron-builder 26 + electron-updater 6。
 
 ## 常用命令
 
@@ -62,7 +64,7 @@ CI 位于 `.github/workflows/release.yml`：在 `macos-latest` 上跑 `electron-
 
 ⚠️ 白名单域名**不能**改成 `safeOpenExternal`——踢到 Safari 会丢失登录态，且 WebRTC 麦克风权限在浏览器里需重新授权。代价是当前页面被替换且无法后退，这是单窗口设计的固有取舍。
 
-注意 `nativeWindowOpen` 已在 **Electron 18 被移除**（项目用 39），`webPreferences` 里不要写这个选项，它是死代码。
+注意 `nativeWindowOpen` 已在 **Electron 18 被移除**（项目用 44），`webPreferences` 里不要写这个选项，它是死代码。
 
 ### 自动更新
 `electron-updater` 在非 `NODE_ENV=development` 时启动后延迟 10s 检查，`autoDownload=true`，下载完成后弹静默通知，点击触发 `quitAndInstall`。错误事件只 `console.error`，不弹给用户。

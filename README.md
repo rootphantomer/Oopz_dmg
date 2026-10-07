@@ -122,7 +122,7 @@ iconutil -c icns assets/icon.iconset -o assets/icon.icns
 
 ## 技术栈
 
-- [Electron](https://www.electronjs.org/) 39
+- [Electron](https://www.electronjs.org/) 44
 - [electron-builder](https://www.electronjs.org/builder) 26
 - [electron-updater](https://github.com/electron-userland/electron-builder/tree/master/packages/electron-updater) 6
 - 目标平台：macOS（x64 + arm64）
