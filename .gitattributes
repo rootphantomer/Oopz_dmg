@@ -1,0 +1,16 @@
+# 默认按文本处理，仓库内统一 LF
+* text=auto eol=lf
+
+# 以下类型在 Windows 上也强制 LF：
+# plist 被 codesign 解析，CRLF 会导致签名失败
+*.plist text eol=lf
+*.html text eol=lf
+*.js   text eol=lf
+*.json text eol=lf
+*.yml  text eol=lf
+
+# 二进制资源不做行尾转换
+*.png  binary
+*.icns binary
+*.ico  binary
+*.icns binary

@@ -7,14 +7,26 @@
   "scripts": {
     "start": "electron .",
     "check": "node --check main.js && node --check preload.js",
-    "build": "electron-builder --mac dmg --x64 --arm64",
+    "build": "electron-builder --mac dir",
     "build:dmg": "electron-builder --mac dmg --x64 --arm64",
-    "build:dir": "electron-builder --mac dir",
-    "clean": "rm -rf node_modules dist"
+    "clean": "node -e \"require('fs').rmSync('node_modules',{recursive:true,force:true});require('fs').rmSync('dist',{recursive:true,force:true})\""
   },
-  "keywords": [],
+  "keywords": [
+    "electron",
+    "macos",
+    "oopz",
+    "voice-chat"
+  ],
   "author": "oopz",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/rootphantomer/Oopz_dmg.git"
+  },
+  "homepage": "https://github.com/rootphantomer/Oopz_dmg#readme",
+  "bugs": {
+    "url": "https://github.com/rootphantomer/Oopz_dmg/issues"
+  },
   "dependencies": {
     "electron-updater": "^6.8.9"
   },
@@ -31,6 +43,7 @@
     "files": [
       "main.js",
       "preload.js",
+      "offline.html",
       "assets/**/*",
       "package.json"
     ],
@@ -51,8 +64,10 @@
           ]
         }
       ],
-      "hardenedRuntime": false,
-      "gatekeeperAssess": false
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist"
     },
     "dmg": {
       "title": "Oopz",
