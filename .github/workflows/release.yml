@@ -99,6 +99,12 @@ jobs:
               echo "### 首次发布 🎉"
             fi
             echo ""
+            echo "### 系统要求"
+            echo ""
+            echo "**macOS 12 (Monterey) 或更高版本。**"
+            echo "自 v1.3.0 起内核升级至 Electron 44，最低系统版本由 macOS 10.15 提升至 macOS 12。"
+            echo "macOS 11 及更早的系统请继续使用 v1.2.2：https://github.com/rootphantomer/Oopz_dmg/releases/tag/v1.2.2"
+            echo ""
             echo "### 安装说明"
             echo ""
             echo "由于本应用未签名，macOS 可能会提示「无法验证开发者」。"

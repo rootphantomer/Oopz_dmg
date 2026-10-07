@@ -20,6 +20,11 @@
 
 ## 安装
 
+> **📋 系统要求：macOS 12 ( Monterey) 或更高版本**
+>
+> 自 v1.3.0 起，内核升级至 Electron 44，最低系统版本由 macOS 10.15 提升至 **macOS 12**。
+> macOS 11 及更早的系统请继续使用 [v1.2.2](https://github.com/rootphantomer/Oopz_dmg/releases/tag/v1.2.2)。
+
 下载 DMG 后，双击打开，将 Oopz 拖入「应用程序」文件夹。
 
 > **⚠️ macOS 安全提示**

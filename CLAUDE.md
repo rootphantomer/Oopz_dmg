@@ -100,6 +100,9 @@ CI 位于 `.github/workflows/release.yml`：在 `macos-latest` 上跑 `electron-
 - 改完 `main.js` 后 `npm run check` 过语法，再 `npm run build` 验证启动正常（比打 DMG 快很多）
 - 涉及 session 分区名 (`persist:oopz`) 时，用户登录态会丢
 - CI 用 Node 22，本地最好对齐
+- **发版流程**：`npm version <新版本> --no-git-tag-version` 改 `package.json` + `package-lock.json`（必须同步，只改前者会导致 `npm ci` 报 lock 不同步）→ commit → `git tag -a v<版本> -m "..."` → `git push origin main && git push origin v<版本>`。**tag push 会触发 CI 在 macOS runner 上构建 DMG，本地不产出 release。**
+- **版本号一起改三处**：CI 的 release notes 模板里写死了版本相关描述（如最低系统版本），升 Electron 大版本时必须同步改 `.github/workflows/release.yml` 的 notes 段和 `README.md` 的系统要求，否则 Release 页面会漏掉 breaking change
+- **最低系统版本由 Electron 版本决定**：`package.json` 的 `build.mac` 下没有 `LSMinimumSystemVersion` 字段，electron-builder 按 Electron 默认值推导。Electron 44 → macOS 12.0，Electron 39 → macOS 10.15。升级 Electron 大版本前先确认这个兼容性 break
 - 应用**未签名**（无 Apple Developer ID），但已开启 `hardenedRuntime: true` + ad-hoc 签名，entitlement 见 `build/entitlements.mac.plist`。发布说明里那段 Gatekeeper 提示仍然必要（ad-hoc ≠ 公证 notarization）
 - 改 `actions/*` 版本时，SHA 必须去 GitHub API 核对，不要凭记忆写 —— 写错会让 CI 直接失败
 - `electron-updater` 增量更新依赖 DMG 同名 `.blockmap` 文件，CI 已经一并上传
