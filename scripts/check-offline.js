@@ -11,7 +11,8 @@ const vm = require('vm')
 
 const file = path.join(__dirname, '..', 'offline.html')
 const html = fs.readFileSync(file, 'utf8')
-const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)]
+// 大小写不敏感：HTML 标签名本身不区分大小写（也避免 CodeQL js/bad-tag-filter 告警）
+const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/gi)]
 
 if (scripts.length !== 1) {
   console.error(`[check] offline.html 期望恰好 1 段内联 <script>，实际 ${scripts.length} 段`)
