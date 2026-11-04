@@ -11,7 +11,9 @@ const TRAY_ICON_PATH = path.join(__dirname, 'assets', 'trayTemplate.png')
 const APP_ICON_PATH = path.join(__dirname, 'assets', 'icon.png')
 const OFFLINE_PAGE_PATH = path.join(__dirname, 'offline.html')
 const ALLOWED_APP_HOSTS = new Set(['web.oopz.cn', 'oopz.cn'])
-const ALLOWED_EXTERNAL_PROTOCOLS = new Set(['http:', 'https:'])
+// 交给系统浏览器处理的协议白名单：只放行明确安全的几类，
+// file: / smb: / 自定义 scheme 一律拒绝（shell.openExternal 会真的去执行它们）
+const ALLOWED_EXTERNAL_PROTOCOLS = new Set(['http:', 'https:', 'mailto:', 'tel:'])
 
 // 窗口状态文件路径必须在 app ready 之后才能求值（app.getPath 未就绪时返回错误路径）
 let windowStatePath = null
@@ -21,6 +23,8 @@ let mainWindow = null
 let tray = null
 let loadTimeout = null
 let saveDebounce = null
+// 离线页文件本身损坏/漏打包时置位，防止 loadFile → loadURL → did-fail-load 无限循环
+let offlinePageBroken = false
 const MAX_RENDERER_RETRIES = 3
 // 崩溃计数窗口：60 秒内的崩溃才累计，避免「加载成功一次就归零」导致上限失效
 const CRASH_WINDOW_MS = 60000
@@ -89,13 +93,13 @@ function isAllowedAppUrl (url) {
   return Boolean(parsed && parsed.protocol === 'https:' && isAllowedAppHost(parsed.hostname))
 }
 
-function isHttpUrl (url) {
+function isAllowedExternalUrl (url) {
   const parsed = parseUrl(url)
   return Boolean(parsed && ALLOWED_EXTERNAL_PROTOCOLS.has(parsed.protocol))
 }
 
 function safeOpenExternal (url) {
-  if (!isHttpUrl(url)) {
+  if (!isAllowedExternalUrl(url)) {
     console.warn('[navigation] blocked external URL:', url)
     return
   }
@@ -131,11 +135,18 @@ function isAllowedMediaRequest (webContents, details = {}) {
 // （CodeQL js/xss、js/client-side-unvalidated-url-redirection）
 function showOfflinePage () {
   if (!mainWindow || mainWindow.isDestroyed()) return
+
+  // 离线页本身不可用（漏打包 / 文件损坏）时，兜底的 loadURL 失败会再次触发
+  // did-fail-load → showOfflinePage，形成无上限的导航循环。
+  // 一旦确认离线页打不开就永久停手，让 Chromium 的错误页留在窗口里。
+  if (offlinePageBroken) return
+
   mainWindow.loadFile(OFFLINE_PAGE_PATH).catch(err => {
+    offlinePageBroken = true
     // loadFile 加载 file:// 失败时不会触发 did-fail-load，这里是唯一兜底。
-    // 若连离线页都打不开（漏打包 / 文件损坏），退回到主域名，
-    // 至少让 Chromium 渲染自带的错误页而不是纯白屏。
+    // 退回到主域名，至少让 Chromium 渲染自带的错误页而不是纯白屏。
     console.error('[offline] failed to load offline page:', err.message)
+    if (!mainWindow || mainWindow.isDestroyed()) return
     mainWindow.loadURL(APP_URL).catch(() => {})
   })
 }
@@ -253,15 +264,14 @@ function createWindow () {
 
   // 加载超过 8 秒仍未完成：强制显示窗口
   loadTimeout = setTimeout(() => {
+    loadTimeout = null
     if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isVisible()) {
       mainWindow.show()
     }
   }, 8000)
   mainWindow.webContents.once('did-finish-load', () => {
     clearTimeout(loadTimeout)
-  })
-  mainWindow.webContents.once('did-fail-load', () => {
-    clearTimeout(loadTimeout)
+    loadTimeout = null
   })
 
   // 点击关闭按钮 → 最小化到托盘，Dock 图标保留
@@ -289,12 +299,23 @@ function createWindow () {
     updateDockBadge(title)
   })
 
-  // 加载失败（断网等）→ 显示离线提示页
+  // 加载失败（断网等）→ 显示离线提示页。
+  // did-fail-load 对子 frame 也会触发，只有主文档失败才代表「这一页没加载出来」；
+  // 用 isMainFrame 过滤，顺便避免子 frame 失败时提前清掉 8 秒兜底计时器。
   mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL, isMainFrame) => {
-    if (event.sender === mainWindow.webContents && isMainFrame && errorCode !== -3) {
-      console.error('[load] failed:', errorCode, errorDescription, validatedURL)
-      showOfflinePage()
-    }
+    if (!isMainFrame) return
+
+    clearTimeout(loadTimeout)
+    loadTimeout = null
+
+    // 主窗口可能已经在退出流程里被销毁
+    if (!mainWindow || mainWindow.isDestroyed()) return
+    if (event.sender !== mainWindow.webContents) return
+    // -3 = ERR_ABORTED：被新的导航顶掉（例如切到离线页），不是真的失败
+    if (errorCode === -3) return
+
+    console.error('[load] failed:', errorCode, errorDescription, validatedURL)
+    showOfflinePage()
   })
 
   // 渲染进程崩溃 → 自动恢复（避免白屏卡死，限制重试次数防止无限循环）
@@ -418,7 +439,10 @@ function setupAutoUpdater () {
 function setupDownloadHandler () {
   const ses = session.fromPartition('persist:oopz')
   ses.on('will-download', (_event, item) => {
-    const defaultPath = item.getFilename()
+    // 只保留文件名部分：远端 Content-Disposition 里的 filename 理论上可能带路径分隔符
+    const rawName = path.basename(item.getFilename() || '')
+    const defaultPath = rawName && rawName !== '.' && rawName !== '..' ? rawName : 'download'
+    const options = { defaultPath, buttonLabel: '保存' }
     let savePath = defaultPath
 
     item.pause()
@@ -430,10 +454,20 @@ function setupDownloadHandler () {
       }
     })
 
-    dialog.showSaveDialog(mainWindow, {
-      defaultPath,
-      buttonLabel: '保存'
-    }).then(({ canceled, filePath }) => {
+    // 主窗口可能已销毁/正在退出：不能把失效的窗口当父窗口传进去
+    const parent = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null
+    let pending
+    try {
+      pending = parent
+        ? dialog.showSaveDialog(parent, options)
+        : dialog.showSaveDialog(options)
+    } catch (err) {
+      console.error('[download] 保存对话框打开失败:', err.message)
+      item.cancel()
+      return
+    }
+
+    pending.then(({ canceled, filePath }) => {
       if (canceled || !filePath) {
         item.cancel()
         return
@@ -457,18 +491,22 @@ function showWindow () {
 }
 
 // ── 应用事件 ────────────────────────────────────────────────────────────
-app.whenReady().then(() => {
-  // app.getPath 必须在 ready 之后调用
-  windowStatePath = path.join(app.getPath('userData'), 'window-state.json')
+// 只有拿到单实例锁的进程才初始化：第二实例已经调了 app.quit()，
+// 如果继续注册 whenReady，可能在退出前短暂创建窗口/托盘
+if (gotLock) {
+  app.whenReady().then(() => {
+    // app.getPath 必须在 ready 之后调用
+    windowStatePath = path.join(app.getPath('userData'), 'window-state.json')
 
-  setupMediaPermissions()
-  setupApplicationMenu()
-  setupAutoUpdater()
-  setupDownloadHandler()
-  createWindow()
-  createTray()
-  app.on('activate', () => { showWindow() })
-})
+    setupMediaPermissions()
+    setupApplicationMenu()
+    setupAutoUpdater()
+    setupDownloadHandler()
+    createWindow()
+    createTray()
+    app.on('activate', () => { showWindow() })
+  })
+}
 
 app.on('window-all-closed', () => {
   // 不退出，靠托盘维持运行

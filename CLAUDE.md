@@ -72,6 +72,8 @@ CI 分两条流水线：
 ### 导航策略
 外链统一用 `shell.openExternal` 打开，仅 `https://web.oopz.cn` 和 `https://oopz.cn` 允许在 app 内导航（`will-navigate` 拦截非白名单 URL 转外部浏览器）。
 
+交给系统浏览器的协议是**白名单**：`http:` / `https:` / `mailto:` / `tel:`（`ALLOWED_EXTERNAL_PROTOCOLS`）。不要图省事改成「非白名单就 openExternal」——`shell.openExternal` 会执行 `file:`、`smb:`、自定义 scheme 等危险协议。
+
 `setWindowOpenHandler` 始终返回 `{ action: 'deny' }`（保持单窗口），但白名单域名的处理与 `will-navigate` **不同**：走 `mainWindow.loadURL(url)` 留在 app 内。
 
 ⚠️ 白名单域名**不能**改成 `safeOpenExternal`——踢到 Safari 会丢失登录态，且 WebRTC 麦克风权限在浏览器里需重新授权。代价是当前页面被替换且无法后退，这是单窗口设计的固有取舍。
@@ -95,7 +97,9 @@ CI 分两条流水线：
 1. **不要把窗口位置数据当跳转目标**。曾经用 `loadFile({ query: { retry } })` + `URLSearchParams(window.location.search)` + `location.href`，被 CodeQL 判为 `js/xss` + `js/client-side-unvalidated-url-redirection`：主进程的白名单校验在另一个进程，污点分析看不见。想保留子路径重试，必须让主进程 `loadURL()` 执行跳转（IPC），而不是在渲染进程赋值 `location`。
 2. **不要在 offline.html 里监听 window `online` 事件做自动重连**。Electron 官方文档指出 `navigator.onLine` 是「在线弱指示」（虚拟网卡 / always-connected 网卡都返回 `true`），该事件在离线页加载瞬间几乎必然误触发 → 跳转 → 失败 → `did-fail-load` 跳回离线页 → 无限死循环。改为用户手动点按钮。
 
-另外 `loadFile` 加载 `file://` 失败时**不会**触发 `did-fail-load`（Chromium 对本地文件走同步读取路径），所以 `.catch` 是唯一兜底，那里会退回 `loadURL(APP_URL)` 渲染 Chromium 自带错误页，避免纯白屏。
+另外 `loadFile` 加载 `file://` 失败时**不会**触发 `did-fail-load`（Chromium 对本地文件走同步读取路径），所以 `.catch` 是唯一兜底，那里会退回 `loadURL(APP_URL)` 渲染 Chromium 自带错误页，避免纯白屏。兜底路径会把 `offlinePageBroken` 置位，之后 `showOfflinePage()` 直接返回——否则「loadFile 失败 → loadURL → did-fail-load → showOfflinePage」会无限循环。
+
+`did-fail-load` 处理器里必须先判 `isMainFrame`，再判 `mainWindow` 是否已销毁：子 frame 失败与主文档无关（还会提前清掉 8 秒兜底计时器），而退出流程中 `mainWindow` 可能已为 null。
 
 ### Dock 未读徽标
 监听 `page-title-updated`，用正则 `/[(（[【]\s*(\d+\+?)\s*[)）\]】]/` 提取未读数，兼容半角 `(3) [12+]` 与全角 `（3） 【12+】`，写到 `app.dock.setBadge`。
