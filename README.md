@@ -4,7 +4,8 @@
 
 ## 功能
 
-- 🎙️ **语音通话**：自动授权麦克风权限，网页按需申请，不提前打扰
+- 🎙️ **语音通话**：自动授权麦克风与摄像头，网页按需申请，不提前打扰
+- 🖥️ **屏幕共享**：权限已放行；macOS 15+ 使用系统选择器，macOS 13/14 共享主屏
 - 🔄 **自动更新**：启动后静默检查更新，后台下载完成后推送通知。⚠️ 应用未签名，自动安装可能失败（见下方「关于自动更新」），失败时请手动下载新版
 - 📡 **断网提示**：网络断开时显示离线页面，恢复网络后可一键重新连接回首页
 - 📁 **文件下载**：下载文件时弹出保存对话框，不静默丢失
@@ -99,6 +100,8 @@ CI 会自动：
 oopz/
 ├── main.js              # Electron 主进程（窗口、托盘、权限、自动更新、离线页、文件下载、Dock 徽标）
 ├── preload.js           # 预加载脚本（安全隔离）
+├── lib/
+│   └── security.js      # URL / 权限判定（纯函数，可单测）
 ├── offline.html         # 离线提示页（loadFile 加载，重试目标为页面内常量）
 ├── package.json         # 项目配置 & electron-builder 配置
 ├── build/
@@ -106,6 +109,7 @@ oopz/
 ├── scripts/
 │   ├── gen_icons.py           # 图标生成脚本
 │   ├── check-offline.js       # offline.html 内联脚本语法校验
+│   ├── check-permissions.js   # 权限矩阵 / URL 白名单断言
 │   ├── smoke-offline.js       # 离线页冒烟测试（Electron 内跑）
 │   ├── check-fuses.js         # 校验打包产物的 Electron Fuses
 │   └── check-boot.js          # 启动打包产物确认不崩

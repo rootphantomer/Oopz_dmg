@@ -1,19 +1,16 @@
 'use strict'
 
-const { app, BrowserWindow, Tray, Menu, nativeImage, shell, session, Notification, screen, dialog } = require('electron')
+const { app, BrowserWindow, Tray, Menu, nativeImage, shell, session, Notification, screen, dialog, desktopCapturer } = require('electron')
 const { autoUpdater } = require('electron-updater')
 const path = require('path')
 const fs = require('fs')
+const { isAllowedAppUrl, isAllowedExternalUrl, isPermissionAllowed } = require('./lib/security')
 
 // ── 常量 ───────────────────────────────────────────────────────────────
 const APP_URL = 'https://web.oopz.cn'
 const TRAY_ICON_PATH = path.join(__dirname, 'assets', 'trayTemplate.png')
 const APP_ICON_PATH = path.join(__dirname, 'assets', 'icon.png')
 const OFFLINE_PAGE_PATH = path.join(__dirname, 'offline.html')
-const ALLOWED_APP_HOSTS = new Set(['web.oopz.cn', 'oopz.cn'])
-// 交给系统浏览器处理的协议白名单：只放行明确安全的几类，
-// file: / smb: / 自定义 scheme 一律拒绝（shell.openExternal 会真的去执行它们）
-const ALLOWED_EXTERNAL_PROTOCOLS = new Set(['http:', 'https:', 'mailto:', 'tel:'])
 
 // 窗口状态文件路径必须在 app ready 之后才能求值（app.getPath 未就绪时返回错误路径）
 let windowStatePath = null
@@ -76,28 +73,7 @@ function scheduleSaveWindowState () {
 
 
 // ── URL / Origin 安全校验 ──────────────────────────────────────────────
-function parseUrl (url) {
-  try {
-    return new URL(url)
-  } catch {
-    return null
-  }
-}
-
-function isAllowedAppHost (hostname) {
-  return ALLOWED_APP_HOSTS.has(hostname)
-}
-
-function isAllowedAppUrl (url) {
-  const parsed = parseUrl(url)
-  return Boolean(parsed && parsed.protocol === 'https:' && isAllowedAppHost(parsed.hostname))
-}
-
-function isAllowedExternalUrl (url) {
-  const parsed = parseUrl(url)
-  return Boolean(parsed && ALLOWED_EXTERNAL_PROTOCOLS.has(parsed.protocol))
-}
-
+// 判定逻辑在 lib/security.js（纯函数，scripts/check-permissions.js 有对应断言）
 function safeOpenExternal (url) {
   if (!isAllowedExternalUrl(url)) {
     console.warn('[navigation] blocked external URL:', url)
@@ -108,23 +84,64 @@ function safeOpenExternal (url) {
   })
 }
 
-// ── 媒体权限：仅对可信来源自动授权麦克风 ─────────────────────────────
-// Electron 两个 handler 的 details 字段不同：
-//   setPermissionRequestHandler → mediaTypes: string[]（可能为空数组）
-//   setPermissionCheckHandler  → mediaType:  string（单数，可能为 'unknown'）
-// 因此判定规则是「只有明确要求 video 时才拒绝，其余（audio / unknown / 未指定）放行」
-function isAllowedMediaRequest (webContents, details = {}) {
-  const origin = details.securityOrigin || details.requestingUrl || (webContents && webContents.getURL())
-  const parsed = parseUrl(origin)
-  if (!parsed || !isAllowedAppHost(parsed.hostname)) return false
+// ── 权限策略 ───────────────────────────────────────────────────────────
+// 默认拒绝：只有 lib/security.js 里 GRANTED_PERMISSIONS 列出的权限，
+// 且来源是可信域（https + web.oopz.cn / oopz.cn）时才放行。
+// 硬件本身仍由 macOS TCC 把关，Electron 这里只是 Chromium 层的开关。
+function resolveRequestOrigin (webContents, details = {}, fallbackOrigin) {
+  return details.securityOrigin ||
+    fallbackOrigin ||
+    details.requestingUrl ||
+    (webContents && webContents.getURL()) ||
+    ''
+}
 
-  if (Array.isArray(details.mediaTypes)) {
-    return !details.mediaTypes.includes('video')
-  }
-  if (details.mediaType) {
-    return details.mediaType !== 'video'
-  }
-  return true
+function setupPermissions () {
+  const ses = session.fromPartition('persist:oopz')
+
+  ses.setPermissionRequestHandler((webContents, permission, callback, details) => {
+    const origin = resolveRequestOrigin(webContents, details)
+    const granted = isPermissionAllowed(permission, origin)
+    if (!granted) console.warn('[permission] denied:', permission, origin)
+    callback(granted)
+  })
+
+  ses.setPermissionCheckHandler((webContents, permission, requestingOrigin, details) => {
+    const origin = resolveRequestOrigin(webContents, details, requestingOrigin)
+    return isPermissionAllowed(permission, origin)
+  })
+
+  // 屏幕共享：Chromium 只会在 display-capture 权限放行后走到这里。
+  // macOS 15+ 用系统自带选择器（useSystemPicker），此时 handler 不会被调用；
+  // 更早的系统没有选择器 API，退回共享主屏——比完全不可用要好，
+  // 后续如果要让用户选窗口，需要自己做选择器 UI。
+  ses.setDisplayMediaRequestHandler((request, callback) => {
+    try {
+      // securityOrigin 是首选来源；frame 可能已经被销毁（为 null），只做兜底
+      const origin = request.securityOrigin || (request.frame ? request.frame.url : '')
+      if (!isAllowedAppUrl(origin)) {
+        console.warn('[display-media] blocked:', origin)
+        callback(null)
+        return
+      }
+
+      desktopCapturer.getSources({ types: ['screen'] })
+        .then(sources => {
+          if (!sources || sources.length === 0) {
+            callback(null)
+            return
+          }
+          callback({ video: sources[0] })
+        })
+        .catch(err => {
+          console.error('[display-media] getSources failed:', err.message)
+          callback(null)
+        })
+    } catch (err) {
+      console.error('[display-media] handler error:', err.message)
+      try { callback(null) } catch { /* ignore */ }
+    }
+  }, { useSystemPicker: true })
 }
 
 // ── 离线提示页 ─────────────────────────────────────────────────────────
@@ -150,20 +167,6 @@ function showOfflinePage () {
     mainWindow.loadURL(APP_URL).catch(() => {})
   })
 }
-
-// ── 媒体权限：仅对可信来源自动授权麦克风 ─────────────────────────────
-function setupMediaPermissions () {
-  const ses = session.fromPartition('persist:oopz')
-
-  ses.setPermissionRequestHandler((webContents, permission, callback, details) => {
-    callback(permission === 'media' && isAllowedMediaRequest(webContents, details))
-  })
-
-  ses.setPermissionCheckHandler((webContents, permission, _requestingOrigin, details) => {
-    return permission === 'media' && isAllowedMediaRequest(webContents, details)
-  })
-}
-
 
 // ── 解析 title 中的未读数，设置 Dock 徽标 ─────────────────────────
 function updateDockBadge (title) {
@@ -498,7 +501,7 @@ if (gotLock) {
     // app.getPath 必须在 ready 之后调用
     windowStatePath = path.join(app.getPath('userData'), 'window-state.json')
 
-    setupMediaPermissions()
+    setupPermissions()
     setupApplicationMenu()
     setupAutoUpdater()
     setupDownloadHandler()
