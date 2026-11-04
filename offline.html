@@ -45,9 +45,11 @@
   <div class="status" id="status"></div>
   <script>
     'use strict'
-    // retry URL 由主进程通过 loadFile query 注入，且已经过白名单校验
-    const params = new URLSearchParams(window.location.search)
-    const retryUrl = params.get('retry') || 'https://web.oopz.cn'
+    // 重试目标固定为可信主域名常量。
+    // 不要把 window.location.search 等「窗口位置数据」当跳转目标：
+    // 那是不可信输入，直接赋给 location.href 会构成 DOM XSS / 开放重定向
+    // （CodeQL js/xss、js/client-side-unvalidated-url-redirection）
+    const RETRY_URL = 'https://web.oopz.cn'
     const statusEl = document.getElementById('status')
     const retryBtn = document.getElementById('retryBtn')
     let navigating = false
@@ -58,7 +60,7 @@
       navigating = true
       retryBtn.disabled = true
       statusEl.textContent = '正在连接...'
-      window.location.href = retryUrl
+      window.location.href = RETRY_URL
     }
 
     retryBtn.addEventListener('click', retry)
