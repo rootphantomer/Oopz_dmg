@@ -60,6 +60,12 @@ npm install
 
 # 开发运行
 npm start
+
+# 语法检查（含 offline.html 内联脚本）
+npm run check
+
+# 离线页冒烟测试
+npm run test:smoke
 ```
 
 ## 打包
@@ -97,16 +103,21 @@ oopz/
 ├── package.json         # 项目配置 & electron-builder 配置
 ├── build/
 │   └── entitlements.mac.plist  # hardened runtime entitlement（JIT / 网络 / 文件选择）
+├── scripts/
+│   ├── gen_icons.py           # 图标生成脚本
+│   ├── check-offline.js       # offline.html 内联脚本语法校验
+│   ├── smoke-offline.js       # 离线页冒烟测试（Electron 内跑）
+│   ├── check-fuses.js         # 校验打包产物的 Electron Fuses
+│   └── check-boot.js          # 启动打包产物确认不崩
 ├── .github/
 │   └── workflows/
-│       └── release.yml  # CI/CD 自动发布
+│       ├── ci.yml       # push/PR 验证（check + smoke + build + fuses + boot）
+│       └── release.yml  # tag 触发 → 构建 DMG → 发 Release
 ├── assets/
 │   ├── icon.icns              # macOS App 图标
 │   ├── icon.png               # 512x512 PNG 图标
 │   ├── trayTemplate.png       # 托盘图标 16x16（自动适配深/浅色）
 │   └── trayTemplate@2x.png   # 托盘图标 32x32（Retina）
-└── scripts/
-    └── gen_icons.py           # 图标生成脚本
 ```
 
 > 窗口状态文件位于 `~/Library/Application Support/Oopz/window-state.json`，可手动删除恢复默认窗口大小。
