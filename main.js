@@ -104,10 +104,6 @@ function safeOpenExternal (url) {
   })
 }
 
-function normalizeRetryUrl (url) {
-  return isAllowedAppUrl(url) ? url : APP_URL
-}
-
 // ── 媒体权限：仅对可信来源自动授权麦克风 ─────────────────────────────
 // Electron 两个 handler 的 details 字段不同：
 //   setPermissionRequestHandler → mediaTypes: string[]（可能为空数组）
@@ -129,14 +125,13 @@ function isAllowedMediaRequest (webContents, details = {}) {
 
 // ── 离线提示页 ─────────────────────────────────────────────────────────
 // 用真实的 file:// 页面而非 data: URL：避免超长 URL、CSP 限制，
-// 且重试导航能被 will-navigate 正常放行（retry URL 已过白名单校验）
-function showOfflinePage (failedUrl) {
+// 且重试导航能被 will-navigate 正常放行。
+// 重试目标固定为 offline.html 内的常量（APP_URL），不通过 query 注入：
+// 把窗口位置数据当跳转目标会构成 DOM XSS / 开放重定向
+// （CodeQL js/xss、js/client-side-unvalidated-url-redirection）
+function showOfflinePage () {
   if (!mainWindow || mainWindow.isDestroyed()) return
-  const retryUrl = normalizeRetryUrl(failedUrl || APP_URL)
-  // query 直接传原值：Electron 内部走 url.format 自行编码。
-  // 若这里再手动 encodeURIComponent 会变成双重编码，
-  // offline.html 里的 URLSearchParams.get() 拿到的是 %3A%2F%2F... 而非真实 URL。
-  mainWindow.loadFile(OFFLINE_PAGE_PATH, { query: { retry: retryUrl } }).catch(err => {
+  mainWindow.loadFile(OFFLINE_PAGE_PATH).catch(err => {
     // loadFile 加载 file:// 失败时不会触发 did-fail-load，这里是唯一兜底。
     // 若连离线页都打不开（漏打包 / 文件损坏），退回到主域名，
     // 至少让 Chromium 渲染自带的错误页而不是纯白屏。
@@ -298,7 +293,7 @@ function createWindow () {
   mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL, isMainFrame) => {
     if (event.sender === mainWindow.webContents && isMainFrame && errorCode !== -3) {
       console.error('[load] failed:', errorCode, errorDescription, validatedURL)
-      showOfflinePage(validatedURL)
+      showOfflinePage()
     }
   })
 
@@ -316,7 +311,7 @@ function createWindow () {
     if (rendererCrashTimestamps.length > MAX_RENDERER_RETRIES) {
       console.error('[renderer-gone] 达到最大重试次数，停止恢复')
       rendererCrashTimestamps = []
-      showOfflinePage(APP_URL)
+      showOfflinePage()
       return
     }
     if (mainWindow && !mainWindow.isDestroyed()) {

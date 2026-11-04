@@ -42,7 +42,7 @@ CI 位于 `.github/workflows/release.yml`：在 `macos-latest` 上跑 `electron-
 ### 文件职责
 - `main.js` — 主进程（窗口、托盘、权限、自动更新、离线页、文件下载、Dock 徽标、窗口状态持久化）
 - `preload.js` — 预加载脚本（当前是空的，只保留 contextBridge 扩展空间）
-- `offline.html` — 离线提示页。由主进程 `loadFile()` 加载，retry URL 通过 query 参数注入（已过白名单校验）
+- `offline.html` — 离线提示页。由主进程 `loadFile()` 加载，重试目标为页面内常量（不接收外部 URL）
 - `package.json` — electron-builder 配置 + npm scripts
 - `build/entitlements.mac.plist` — hardened runtime 所需的 entitlement（JIT / 出站网络 / 用户选择文件）
 - `.github/workflows/release.yml` — tag 触发 → 构建 DMG → 发 Release
@@ -75,10 +75,12 @@ CI 位于 `.github/workflows/release.yml`：在 `macos-latest` 上跑 `electron-
 ⚠️ 不要在 `did-finish-load` 里重置计数器——崩溃后 reload 也会触发该事件，会导致上限永远不生效。
 
 ### 离线页
-`showOfflinePage` 用 `loadFile(OFFLINE_PAGE_PATH, { query: { retry } })` 加载真实的 `offline.html`，**不是 data: URL**。原因：data: URL 有长度限制和 CSP 限制，且重试导航在 `will-navigate` 链路上难以放行。
+`showOfflinePage` 用 `loadFile(OFFLINE_PAGE_PATH)` 加载真实的 `offline.html`，**不是 data: URL**。原因：data: URL 有长度限制和 CSP 限制，且重试导航在 `will-navigate` 链路上难以放行。
+
+重试目标写死在 `offline.html` 里（`RETRY_URL` 常量 = `https://web.oopz.cn`），**不再通过 query 注入**——断网重试统一回首页，不回失败时的子路径（SPA 下影响可忽略）。
 
 ⚠️ 两个必须知道的坑：
-1. **不要手动 `encodeURIComponent(retryUrl)`**。Electron 的 `loadFile({query})` 内部走 `url.format` 自行编码，手动编码会变成双重编码，`URLSearchParams.get()` 拿到的是 `%3A%2F%2F...` 而非真实 URL。
+1. **不要把窗口位置数据当跳转目标**。曾经用 `loadFile({ query: { retry } })` + `URLSearchParams(window.location.search)` + `location.href`，被 CodeQL 判为 `js/xss` + `js/client-side-unvalidated-url-redirection`：主进程的白名单校验在另一个进程，污点分析看不见。想保留子路径重试，必须让主进程 `loadURL()` 执行跳转（IPC），而不是在渲染进程赋值 `location`。
 2. **不要在 offline.html 里监听 window `online` 事件做自动重连**。Electron 官方文档指出 `navigator.onLine` 是「在线弱指示」（虚拟网卡 / always-connected 网卡都返回 `true`），该事件在离线页加载瞬间几乎必然误触发 → 跳转 → 失败 → `did-fail-load` 跳回离线页 → 无限死循环。改为用户手动点按钮。
 
 另外 `loadFile` 加载 `file://` 失败时**不会**触发 `did-fail-load`（Chromium 对本地文件走同步读取路径），所以 `.catch` 是唯一兜底，那里会退回 `loadURL(APP_URL)` 渲染 Chromium 自带错误页，避免纯白屏。
