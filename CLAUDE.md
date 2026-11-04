@@ -15,7 +15,7 @@ npm install          # 安装依赖
 npm start            # 开发运行（electron .）
 npm run build        # 仅生成 .app 目录（electron-builder --mac dir，最快自测用）
 npm run build:dmg    # 输出 DMG（实际发布用；CI 跑等价命令）
-npm run check        # 语法校验（main.js / preload.js + offline.html 内联脚本）
+npm run check        # 语法校验（main.js / preload.js + offline.html 内联脚本）+ 权限矩阵断言
 npm run test:smoke   # 离线页冒烟测试（Electron 内跑，验证重试目标与外部参数无关）
 npm run test:fuses   # 校验打包产物的 Electron Fuses 是否按配置生效
 npm run test:boot    # 启动打包产物 8 秒，确认不崩（覆盖 asar integrity）
@@ -49,10 +49,12 @@ CI 分两条流水线：
 
 ### 文件职责
 - `main.js` — 主进程（窗口、托盘、权限、自动更新、离线页、文件下载、Dock 徽标、窗口状态持久化）
+- `lib/security.js` — URL / 权限判定（纯函数，无 Electron 依赖，可直接单测）
 - `preload.js` — 预加载脚本（当前是空的，只保留 contextBridge 扩展空间）
 - `offline.html` — 离线提示页。由主进程 `loadFile()` 加载，重试目标为页面内常量（不接收外部 URL）
 - `package.json` — electron-builder 配置 + npm scripts
 - `scripts/check-offline.js` — 校验 `offline.html` 内联脚本语法（`npm run check` 的一部分）
+- `scripts/check-permissions.js` — 权限矩阵 / URL 白名单断言（`npm run check` 的一部分）
 - `scripts/smoke-offline.js` — 离线页冒烟测试（Electron 内跑）
 - `scripts/check-fuses.js` / `scripts/check-boot.js` — 打包产物校验（fuses 状态 / 能否启动）
 - `build/entitlements.mac.plist` — hardened runtime 所需的 entitlement（JIT / 出站网络 / 用户选择文件）
@@ -64,10 +66,22 @@ CI 分两条流水线：
 `mainWindow` 位置/大小防抖 500ms 写入 `~/Library/Application Support/Oopz/window-state.json`（路径在 `app.whenReady()` 内才求值——`app.getPath()` 在 ready 前不可靠）。注意目录是大写 `Oopz`（取自 Info.plist 的 `CFBundleName`），不是 `package.json` 里的小写 `name`。读取时校验 `width/height ≥ 400×300`，**并用 `screen.getAllDisplays()` 校验坐标是否仍落在某块显示器范围内**，避免多屏断开后窗口恢复到屏幕外。
 
 ### 权限策略
-`setupMediaPermissions` 自动批准 `media`（麦克风），其他全部拒绝。
+默认拒绝。放行规则集中在 `lib/security.js`，判定是纯函数，由 `scripts/check-permissions.js` 断言：
 
-判定逻辑在 `isAllowedMediaRequest`：**只有明确要求 `video` 时才拒绝，其余（`audio` / `unknown` / 未指定）一律放行**。
-注意两个 handler 的 details 字段不同——`setPermissionRequestHandler` 给 `mediaTypes`（数组），`setPermissionCheckHandler` 给 `mediaType`（单数字符串，可能是 `'unknown'`）。不要用 `mediaTypes.includes('audio')` 这种正向判断：Electron 传空数组时会静默拒绝麦克风。
+- 来源必须是 `https:` + `web.oopz.cn` / `oopz.cn`（精确 hostname 匹配，`web.oopz.cn.evil.com` 之类必须拒）
+- 权限必须在 `GRANTED_PERMISSIONS` 里：`media`、`display-capture`、`speaker-selection`、`notifications`、`clipboard-sanitized-write`、`fullscreen`
+- 其余（`geolocation` / `usb` / `hid` / `serial` / `clipboard-read` / `openExternal` …）一律拒绝
+
+⚠️ 不要退回「只放行 `media`」的写法：`web.oopz.cn` 的 RTC bundle 实际会请求 `display-capture`（屏幕共享）、`speaker-selection`（`setSinkId` 选扬声器）、`notifications`、`clipboard-sanitized-write`（复制邀请码）。早期实现靠 `details.mediaTypes` / `mediaType` 判断，Electron 传空数组时会误拒麦克风——现在改成纯 origin 判断，不要再引入字段判断。
+
+两个 handler 必须同时接：`setPermissionRequestHandler` 管主动请求，`setPermissionCheckHandler` 管静默检查，只接一个会出现「检查通过、请求被拒」的割裂。来源字段有兜底链：`details.securityOrigin` → `requestingOrigin`（check handler 单独传）→ `details.requestingUrl` → `webContents.getURL()`。
+
+屏幕共享另有 `setDisplayMediaRequestHandler`：
+- 带 `useSystemPicker: true`，macOS 15+ 走系统选择器，此时 handler 根本不会被调用
+- macOS 13/14 没有选择器 API，handler 回退为共享第一块屏幕（`desktopCapturer.getSources({ types: ['screen'] })`）；要让用户选窗口得自己做选择器 UI
+- 只接受 `request.frame.url` 命中白名单的请求，其它一律 `callback(null)`
+
+注意 Electron 层放行 ≠ 拿到硬件：麦克风 / 摄像头 / 录屏仍由 macOS TCC 把关，首次使用会弹系统授权框。
 
 ### 导航策略
 外链统一用 `shell.openExternal` 打开，仅 `https://web.oopz.cn` 和 `https://oopz.cn` 允许在 app 内导航（`will-navigate` 拦截非白名单 URL 转外部浏览器）。
