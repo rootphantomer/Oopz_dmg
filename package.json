@@ -6,7 +6,10 @@
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "check": "node --check main.js && node --check preload.js",
+    "check": "node --check main.js && node --check preload.js && node scripts/check-offline.js",
+    "test:smoke": "electron scripts/smoke-offline.js",
+    "test:fuses": "node scripts/check-fuses.js",
+    "test:boot": "node scripts/check-boot.js",
     "build": "electron-builder --mac dir",
     "build:dmg": "electron-builder --mac dmg --x64 --arm64",
     "clean": "node -e \"require('fs').rmSync('node_modules',{recursive:true,force:true});require('fs').rmSync('dist',{recursive:true,force:true})\""
@@ -31,6 +34,7 @@
     "electron-updater": "^6.8.9"
   },
   "devDependencies": {
+    "@electron/fuses": "^2.1.3",
     "electron": "^44.9.1",
     "electron-builder": "^26.18.0"
   },
@@ -49,8 +53,16 @@
       "preload.js",
       "offline.html",
       "assets/**/*",
+      "!assets/icon.iconset",
       "package.json"
     ],
+    "electronFuses": {
+      "runAsNode": false,
+      "enableNodeOptionsEnvironmentVariable": false,
+      "enableNodeCliInspectArguments": false,
+      "onlyLoadAppFromAsar": true,
+      "enableEmbeddedAsarIntegrityValidation": true
+    },
     "publish": {
       "provider": "github",
       "owner": "rootphantomer",

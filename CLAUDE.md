@@ -15,7 +15,10 @@ npm install          # 安装依赖
 npm start            # 开发运行（electron .）
 npm run build        # 仅生成 .app 目录（electron-builder --mac dir，最快自测用）
 npm run build:dmg    # 输出 DMG（实际发布用；CI 跑等价命令）
-npm run check        # node --check 语法校验（CI 第一道关卡）
+npm run check        # 语法校验（main.js / preload.js + offline.html 内联脚本）
+npm run test:smoke   # 离线页冒烟测试（Electron 内跑，验证重试目标与外部参数无关）
+npm run test:fuses   # 校验打包产物的 Electron Fuses 是否按配置生效
+npm run test:boot    # 启动打包产物 8 秒，确认不崩（覆盖 asar integrity）
 npm run clean        # 清掉 node_modules + dist
 ```
 
@@ -25,7 +28,12 @@ npm run clean        # 清掉 node_modules + dist
 git tag v1.x.y && git push origin v1.x.y
 ```
 
-CI 位于 `.github/workflows/release.yml`：在 `macos-latest` 上跑 `electron-builder --mac dmg --x64 --arm64 --publish never`，再把两个 DMG + `latest-mac.yml` + blockmap 一起通过 `softprops/action-gh-release` 发到 GitHub Release。`electron-updater` 端读取 `latest-mac.yml` 做增量更新。
+CI 分两条流水线：
+
+- `.github/workflows/ci.yml` —— `push`（任意分支）/ `pull_request` 触发，在 `macos-latest` 上跑 `check → test:smoke → build → test:fuses → test:boot`，只验证不发版
+- `.github/workflows/release.yml` —— tag 触发，跑 `electron-builder --mac dmg --x64 --arm64 --publish never`，再把两个 DMG + `latest-mac.yml` + blockmap 一起通过 `softprops/action-gh-release` 发到 GitHub Release。`electron-updater` 端读取 `latest-mac.yml` 做增量更新。
+
+> 本地跑 `npm ci` 时，部分 npm 版本会拦截依赖的 install 脚本，导致 `node_modules/electron/dist` 缺失；补一句 `node node_modules/electron/install.js` 即可（CI 里也有这一步兜底）。
 
 所有 `actions/*` 均已 pin 到 commit SHA（注释里标版本号），改动时需同步更新注释。
 
@@ -44,7 +52,11 @@ CI 位于 `.github/workflows/release.yml`：在 `macos-latest` 上跑 `electron-
 - `preload.js` — 预加载脚本（当前是空的，只保留 contextBridge 扩展空间）
 - `offline.html` — 离线提示页。由主进程 `loadFile()` 加载，重试目标为页面内常量（不接收外部 URL）
 - `package.json` — electron-builder 配置 + npm scripts
+- `scripts/check-offline.js` — 校验 `offline.html` 内联脚本语法（`npm run check` 的一部分）
+- `scripts/smoke-offline.js` — 离线页冒烟测试（Electron 内跑）
+- `scripts/check-fuses.js` / `scripts/check-boot.js` — 打包产物校验（fuses 状态 / 能否启动）
 - `build/entitlements.mac.plist` — hardened runtime 所需的 entitlement（JIT / 出站网络 / 用户选择文件）
+- `.github/workflows/ci.yml` — push/PR 验证（check + smoke + build + fuses + boot）
 - `.github/workflows/release.yml` — tag 触发 → 构建 DMG → 发 Release
 - `scripts/gen_icons.py` — 从 icon.png 生成 .iconset
 
@@ -99,6 +111,7 @@ CI 位于 `.github/workflows/release.yml`：在 `macos-latest` 上跑 `electron-
 
 ## 修改注意事项
 
+- **不要删 `build.electronFuses`**：`runAsNode` / `NODE_OPTIONS` / `--inspect` 三类调试入口都关掉了，`onlyLoadAppFromAsar` + `enableEmbeddedAsarIntegrityValidation` 让 asar 被篡改时直接启动失败。改完必须跑 `npm run test:fuses` + `npm run test:boot`。`enableCookieEncryption` 是单向迁移（回退版本会读不了 cookie），刻意没开。
 - 改完 `main.js` 后 `npm run check` 过语法，再 `npm run build` 验证启动正常（比打 DMG 快很多）
 - 涉及 session 分区名 (`persist:oopz`) 时，用户登录态会丢
 - CI 用 Node 22，本地最好对齐
