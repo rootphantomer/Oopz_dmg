@@ -5,8 +5,8 @@
 ## 功能
 
 - 🎙️ **语音通话**：自动授权麦克风权限，网页按需申请，不提前打扰
-- 🔄 **自动更新**：启动后静默检查更新，后台下载完成后推送通知一键升级
-- 📡 **断网提示**：网络断开时显示离线页面，记住当前页面位置，可一键重新连接
+- 🔄 **自动更新**：启动后静默检查更新，后台下载完成后推送通知。⚠️ 应用未签名，自动安装可能失败（见下方「关于自动更新」），失败时请手动下载新版
+- 📡 **断网提示**：网络断开时显示离线页面，恢复网络后可一键重新连接回首页
 - 📁 **文件下载**：下载文件时弹出保存对话框，不静默丢失
 - 📌 **系统托盘**：关闭窗口后最小化到菜单栏，后台运行
 - 🪟 **窗口状态记忆**：窗口位置和大小实时保存（防抖），崩溃后也能恢复
@@ -20,19 +20,28 @@
 
 ## 安装
 
-> **📋 系统要求：macOS 12 ( Monterey) 或更高版本**
+> **📋 系统要求：macOS 13 (Ventura) 或更高版本**
 >
-> 自 v1.3.0 起，内核升级至 Electron 44，最低系统版本由 macOS 10.15 提升至 **macOS 12**。
-> macOS 11 及更早的系统请继续使用 [v1.2.2](https://github.com/rootphantomer/Oopz_dmg/releases/tag/v1.2.2)。
+> 自 v1.3.0 起，内核升级至 Electron 44，最低系统版本由 macOS 10.15 提升至 **macOS 13**。
+> macOS 12 及更早的系统请继续使用 [v1.2.2](https://github.com/rootphantomer/Oopz_dmg/releases/tag/v1.2.2)——v1.3.0 起在 macOS 12 上无法启动（应用 bundle 的 `LSMinimumSystemVersion` 为 `13.0`）。
 
 下载 DMG 后，双击打开，将 Oopz 拖入「应用程序」文件夹。
 
 > **⚠️ macOS 安全提示**
-> 由于本应用未使用 Apple Developer 证书签名（仅 ad-hoc 签名），首次打开时 macOS Gatekeeper 可能会拦截。
-> 应用已开启 Hardened Runtime 以获得完整的内存保护，但**没有 Apple 公证（notarization）**，因此仍需手动放行。
+> 本应用**未签名**：既没有 Apple Developer ID 证书，也没有做 ad-hoc 重签。因此：
+> - 打包配置里的 `hardenedRuntime` 与 `entitlements` 因缺少证书被跳过，实际**未生效**；
+> - 没有 Apple 公证（notarization），首次打开时 Gatekeeper 会拦截；
+> - 未签名应用的隐私授权（TCC）按 cdhash 记录，更换构建后可能重新弹麦克风授权。
+>
 > 解决方法（二选一）：
 > 1. **推荐**：右键点击 Oopz.app → 选择「打开」→ 在弹窗中再次点击「打开」
 > 2. 进入 **系统设置 → 隐私与安全性**，找到「已阻止使用 Oopz…」的提示，点击「仍要打开」
+
+### 关于自动更新
+
+`electron-updater` 在 macOS 上依赖 Squirrel.Mac 安装更新，而 Squirrel 要求新版本满足当前应用的代码签名要求。本应用未签名，因此「下载完成 → 点击重启安装」这一步可能失败，且失败只会写进日志、界面上没有提示。
+
+如果重启后版本号没有变化，请直接到 [Releases](https://github.com/rootphantomer/Oopz_dmg/releases) 手动下载覆盖安装。
 
 ## 下载
 
@@ -76,7 +85,7 @@ CI 会自动：
 2. 上传 DMG 安装包及自动更新元数据（`latest-mac.yml` + 增量包）
 3. 创建 GitHub Release 并生成更新日志
 
-发布后，存量用户启动 App 后会静默检测到新版本并自动下载。
+发布后，存量用户启动 App 后会静默检测到新版本并自动下载（能否自动安装取决于代码签名，见上文「关于自动更新」）。
 
 ## 项目结构
 
@@ -84,7 +93,7 @@ CI 会自动：
 oopz/
 ├── main.js              # Electron 主进程（窗口、托盘、权限、自动更新、离线页、文件下载、Dock 徽标）
 ├── preload.js           # 预加载脚本（安全隔离）
-├── offline.html         # 离线提示页（loadFile 加载，retry URL 经白名单校验后注入）
+├── offline.html         # 离线提示页（loadFile 加载，重试目标为页面内常量）
 ├── package.json         # 项目配置 & electron-builder 配置
 ├── build/
 │   └── entitlements.mac.plist  # hardened runtime entitlement（JIT / 网络 / 文件选择）
@@ -100,7 +109,7 @@ oopz/
     └── gen_icons.py           # 图标生成脚本
 ```
 
-> 窗口状态文件位于 `~/Library/Application Support/oopz/window-state.json`，可手动删除恢复默认窗口大小。
+> 窗口状态文件位于 `~/Library/Application Support/Oopz/window-state.json`，可手动删除恢复默认窗口大小。
 
 ## 自定义图标
 
