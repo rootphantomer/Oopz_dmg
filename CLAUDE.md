@@ -49,7 +49,7 @@ CI 位于 `.github/workflows/release.yml`：在 `macos-latest` 上跑 `electron-
 - `scripts/gen_icons.py` — 从 icon.png 生成 .iconset
 
 ### 窗口状态持久化
-`mainWindow` 位置/大小防抖 500ms 写入 `~/Library/Application Support/oopz/window-state.json`（路径在 `app.whenReady()` 内才求值——`app.getPath()` 在 ready 前不可靠）。读取时校验 `width/height ≥ 400×300`，**并用 `screen.getAllDisplays()` 校验坐标是否仍落在某块显示器范围内**，避免多屏断开后窗口恢复到屏幕外。
+`mainWindow` 位置/大小防抖 500ms 写入 `~/Library/Application Support/Oopz/window-state.json`（路径在 `app.whenReady()` 内才求值——`app.getPath()` 在 ready 前不可靠）。注意目录是大写 `Oopz`（取自 Info.plist 的 `CFBundleName`），不是 `package.json` 里的小写 `name`。读取时校验 `width/height ≥ 400×300`，**并用 `screen.getAllDisplays()` 校验坐标是否仍落在某块显示器范围内**，避免多屏断开后窗口恢复到屏幕外。
 
 ### 权限策略
 `setupMediaPermissions` 自动批准 `media`（麦克风），其他全部拒绝。
@@ -104,7 +104,14 @@ CI 位于 `.github/workflows/release.yml`：在 `macos-latest` 上跑 `electron-
 - CI 用 Node 22，本地最好对齐
 - **发版流程**：`npm version <新版本> --no-git-tag-version` 改 `package.json` + `package-lock.json`（必须同步，只改前者会导致 `npm ci` 报 lock 不同步）→ commit → `git tag -a v<版本> -m "..."` → `git push origin main && git push origin v<版本>`。**tag push 会触发 CI 在 macOS runner 上构建 DMG，本地不产出 release。**
 - **版本号一起改三处**：CI 的 release notes 模板里写死了版本相关描述（如最低系统版本），升 Electron 大版本时必须同步改 `.github/workflows/release.yml` 的 notes 段和 `README.md` 的系统要求，否则 Release 页面会漏掉 breaking change
-- **最低系统版本由 Electron 版本决定**：`package.json` 的 `build.mac` 下没有 `LSMinimumSystemVersion` 字段，electron-builder 按 Electron 默认值推导。Electron 44 → macOS 12.0，Electron 39 → macOS 10.15。升级 Electron 大版本前先确认这个兼容性 break
-- 应用**未签名**（无 Apple Developer ID），但已开启 `hardenedRuntime: true` + ad-hoc 签名，entitlement 见 `build/entitlements.mac.plist`。发布说明里那段 Gatekeeper 提示仍然必要（ad-hoc ≠ 公证 notarization）
+- **最低系统版本由 Electron 版本决定**：`package.json` 的 `build.mac` 下没有 `LSMinimumSystemVersion` 字段，electron-builder 按 Electron 自带的 Info.plist 推导。**实测 Electron 44 → macOS 13.0**，Electron 39 → macOS 10.15。升级 Electron 大版本后不要只看发布说明，直接核对产物：
+  ```bash
+  plutil -p dist/mac*/Oopz.app/Contents/Info.plist | grep LSMinimumSystemVersion
+  ```
+  同时在同一个 PR 里同步 `README.md` 的系统要求与 `release.yml` 的 notes 模板。
+- 应用**完全未签名**：无 Apple Developer ID 证书，electron-builder 在没有证书时会**整段跳过签名**——即使写了 `hardenedRuntime: true` + `build/entitlements.mac.plist` 也不会生效。实测发布产物的 `codesign -dv` 输出为 `flags=0x20002(adhoc,linker-signed)`、`Identifier=Electron`、没有 `Runtime Version` 行，entitlements 为空。连带影响：
+  - Squirrel.Mac 要求更新包满足当前 app 的签名要求，ad-hoc 构建的 cdhash 每次都变 → **自动更新可能停在「重启安装」这一步**（`autoUpdater` 的 `error` 只打 console，用户看不到）
+  - TCC（麦克风等）授权按 cdhash 记录，换构建后可能重新弹窗
+  - 要真正修复只能上 Developer ID + 公证；否则就把更新降级为「提示 + 打开 Release 页」
 - 改 `actions/*` 版本时，SHA 必须去 GitHub API 核对，不要凭记忆写 —— 写错会让 CI 直接失败
 - `electron-updater` 增量更新依赖 DMG 同名 `.blockmap` 文件，CI 已经一并上传
